@@ -1314,9 +1314,7 @@ void webserver_values() {
 		String empty_row = F("<tr><td colspan='3'>&nbsp;</td></tr>");
 		last_page_load = millis();
 		long signal_strength = WiFi.RSSI();
-		if (signal_strength > -50) {signal_strength = -50; }
-		if (signal_strength < -100) {signal_strength = -100; }
-		int signal_quality = (signal_strength + 100) * 2;
+        int signal_quality = calculate_signal_quality(signal_strength);
 		debug_out(F("output values to web page..."), DEBUG_MIN_INFO, 1);
 		page_content += make_header(FPSTR(INTL_AKTUELLE_WERTE));
 		if (first_cycle) {
@@ -2584,7 +2582,7 @@ void autoUpdate() {
 /*****************************************************************
 /* display values                                                *
 /*****************************************************************/
-void display_values(const String& value_DHT_T, const String& value_DHT_H, const String& value_BMP_T, const String& value_BMP_P, const String& value_BMP280_T, const String& value_BMP280_P, const String& value_BME280_T, const String& value_BME280_H, const String& value_BME280_P, const String& value_PPD_P1, const String& value_PPD_P2, const String& value_SDS_P1, const String& value_SDS_P2) {
+void display_values(const String& value_DHT_T, const String& value_DHT_H, const String& value_BMP_T, const String& value_BMP_P, const String& value_BMP280_T, const String& value_BMP280_P, const String& value_BME280_T, const String& value_BME280_H, const String& value_BME280_P, const String& value_PPD_P1, const String& value_PPD_P2, const String& value_SDS_P1, const String& value_SDS_P2, const String& signal_strength, const String& signal_quality) {
 #if defined(ESP8266)
 	int value_count = 0;
 	String t_value = "";
@@ -2640,14 +2638,15 @@ void display_values(const String& value_DHT_T, const String& value_DHT_H, const 
 		display.setFont(Monospaced_plain_9);
 		display.setTextAlignment(TEXT_ALIGN_LEFT);
 		value_count = 0;
-		display.drawString(0, 10 * (value_count++), "Temp:" + t_value + "  Hum.:" + h_value);
+		display.drawString(0, 10 * (value_count++), "Temp:" + t_value + "°C  Hum:" + h_value + "%");
+    display.drawString(0, 10 * (value_count++), "Press:" + Float2String(p_value.toFloat() / 100.0) + "hPa");
 		if (ppd_read) {
 			display.drawString(0, 10 * (value_count++), "PPD P1: " + value_PPD_P1);
 			display.drawString(0, 10 * (value_count++), "PPD P2: " + value_PPD_P2);
 		}
 		if (sds_read) {
-			display.drawString(0, 10 * (value_count++), "SDS P1: " + value_SDS_P1);
-			display.drawString(0, 10 * (value_count++), "SDS P2: " + value_SDS_P2);
+			display.drawString(0, 10 * (value_count++), "SDS PM10:  " + value_SDS_P1);
+			display.drawString(0, 10 * (value_count++), "SDS PM2,5: " + value_SDS_P2);
 		}
 		if (gps_read) {
 			if(gps.location.isValid()) {
@@ -2656,6 +2655,12 @@ void display_values(const String& value_DHT_T, const String& value_DHT_H, const 
 			}
 			display.drawString(0, 10 * (value_count++), "satellites: " + String(gps.satellites.value()));
 		}
+// Wifi
+  if (WiFi.status() != WL_CONNECTED) {
+      display.drawString(0, 10 * (value_count++),"No wifi connection");
+    }else{
+      display.drawString(0, 10 * (value_count++), "Wifi: " + signal_strength + "dBm / "+ signal_quality+ "%" );
+    }
 		display.display();
 	}
 	
@@ -2875,6 +2880,7 @@ void loop() {
 	String result_DS18B20 = "";
 	String result_GPS = "";
 	String signal_strength = "";
+  String signal_quality = "";
 
 	unsigned long sum_send_time = 0;
 	unsigned long start_send;
@@ -2975,7 +2981,10 @@ void loop() {
 		data_sample_times += Value2Json("min_micro", String(long(min_micro)));
 		data_sample_times += Value2Json("max_micro", String(long(max_micro)));
 
-		signal_strength = String(WiFi.RSSI());
+    long rssi = WiFi.RSSI();
+		signal_strength = String(rssi);
+    signal_quality = String(calculate_signal_quality(rssi));
+
 		debug_out(F("WLAN signal strength: "), DEBUG_MIN_INFO, 0);
 		debug_out(signal_strength, DEBUG_MIN_INFO, 0);
 		debug_out(F(" dBm"), DEBUG_MIN_INFO, 1);
@@ -3092,7 +3101,7 @@ void loop() {
 		}
 
 		if (has_display || has_lcd1602 || has_lcd1602_27) {
-			display_values(last_value_DHT_T, last_value_DHT_H, last_value_BMP_T, last_value_BMP_P, last_value_BMP280_T, last_value_BMP280_P, last_value_BME280_T, last_value_BME280_H, last_value_BME280_P, last_value_PPD_P1, last_value_PPD_P2, last_value_SDS_P1, last_value_SDS_P2);
+			display_values(last_value_DHT_T, last_value_DHT_H, last_value_BMP_T, last_value_BMP_P, last_value_BMP280_T, last_value_BMP280_P, last_value_BME280_T, last_value_BME280_H, last_value_BME280_P, last_value_PPD_P1, last_value_PPD_P2, last_value_SDS_P1, last_value_SDS_P2,signal_strength, signal_quality );
 		}
 
 		if (send2madavi) {
@@ -3179,4 +3188,10 @@ void loop() {
 	}
 	if (config_needs_write) { writeConfig(); create_basic_auth_strings(); }
 	yield();
+}
+
+int calculate_signal_quality(long signal_strength){
+    if (signal_strength > -50) {signal_strength = -50; }
+    if (signal_strength < -100) {signal_strength = -100; }
+    return (signal_strength + 100) * 2;
 }
